@@ -19,10 +19,6 @@ const mapping = true;
 const gather_infusion = true;
 const gather_data = mapping || gather_infusion;
 
-// let print_tiles = false;
-// let print_backgrounds = true;
-// // const print_map = print_tiles || print_backgrounds;
-
 let NexMap = unsafeWindow.NexMap = {};
 
 function RGBToHex(rgb) {
@@ -40,13 +36,29 @@ function RGBToHex(rgb) {
   return "#" + r + g + b;
 }
 
+function match_regex(text, regex) {
+    return match_any(text, regex);
+}
+
+function match_any(text, ...regexes) {
+    var match = null;
+    for (let regex of regexes) {
+        if (match != null) break;
+        match = RegExp(regex).exec(text);
+    }
+    return match;
+}
+
+const re_name = String.raw`[\w '&,]+`;
+const re_coords = String.raw`(?<x>\d+), (?<y>\d+)`;
+
 function GatherData() {
     const area_desc = document.getElementById("AreaDescription");
     if (area_desc == null) return;
 
     const full_location = area_desc.getElementsByTagName("b")[0];
-    const {name, x, y, plane} = /(?<name>[\w ']+) \((?<x>\d+), (?<y>\d+) (?<plane>[\w ']+), an?/.exec(full_location.childNodes[0].textContent).groups;
-    const {neighborhood} = /, Neighborhood: (?<neighborhood>[\w ']+)\)/.exec(full_location.childNodes[2].textContent).groups;
+    const {name, x, y, plane} = match_regex(full_location.childNodes[0].textContent, String.raw`(?<name>${re_name}) \(${re_coords} (?<plane>${re_name}), an? `).groups;
+    const {neighborhood} = match_regex(full_location.childNodes[2].textContent, String.raw`, Neighborhood: (?<neighborhood>${re_name})\)`).groups;
     const location_type = full_location.childNodes[1].textContent;
 
     if (mapping) {
@@ -55,13 +67,13 @@ function GatherData() {
         for (let form of forms) {
             if (form.name == "portal") {
                 const main_desc = area_desc.getElementsByClassName("mainDescArea")[0].childNodes[0].textContent;
-                const side = /You are standing (?<side>\w+) .*/.exec(main_desc).groups.side;
+                const side = match_regex(main_desc, String.raw`You are standing (?<side>\w+) .*`).groups.side;
                 const inputs = form.getElementsByTagName("input");
                 let counter = 1;
                 for (let input of inputs) {
                     if (input.type == "submit") {
                         const identifier = `portals/${plane}/(${x},${y})/${side}/${counter}`;
-                        let match = /.* to (?<dest>.*)/.exec(input.value);
+                        let match = match_regex(input.value, String.raw`.* to (?<dest>.*)`);
                         let value = undefined;
                         if (match != undefined) value = match.groups.dest;
                         else value = `Unknown Destination (${input.value})`;
@@ -79,7 +91,7 @@ function GatherData() {
                 if (map_tile.title == undefined) continue;
                 if (map_tile.title == "Unknown") continue;
 
-                let map_tile_match = /\((?<x>\d+), (?<y>\d+)\) (?<tile_name>[\w ']+), an? (?<tile_type>[\w ']+)/.exec(map_tile.title);
+                let map_tile_match = match_regex(map_tile.title, String.raw`\(${re_coords}\) (?<tile_name>${re_name}), an? (?<tile_type>${re_name})`);
                 if (map_tile_match == null) {
                     console.log("Error triggered by: " + map_tile.title);
                     continue;
@@ -91,7 +103,7 @@ function GatherData() {
                 GM.setValue(`tiles/types/${plane}/(${x},${y})`, tile_type);
                 GM.setValue(`tiles/data/${plane}/(${x},${y})`, map_tile.title);
                 GM.setValue(`background/${tile_type}`, background);
-                const match = /.*infusion-(?<alignment>\w+)\.gif.*/.exec(map_tile.style.backgroundImage);
+                const match = match_regex(map_tile.style.backgroundImage, String.raw`.*infusion-(?<alignment>\w+)\.gif.*`);
                 if (match != null) {
                     const alignment = match.groups.alignment.charAt(0).toUpperCase() + match.groups.alignment.slice(1);
                     GM.setValue(`infusion/alignment/${plane}/(${x},${y})`, alignment);
@@ -103,7 +115,7 @@ function GatherData() {
     if (gather_infusion) {
         const area_infusion = area_desc.getElementsByClassName("infusionArea")[0];
         if (area_infusion != null) {
-            const {alignment, depth} = /This location is infused and aligned to the forces of (?<alignment>\w+) to a depth of (?<depth>\d+) points./.exec(area_infusion.textContent).groups;
+            const {alignment, depth} = match_regex(area_infusion.textContent, String.raw`This location is infused and aligned to the forces of (?<alignment>\w+) to a depth of (?<depth>\d+) points.`).groups;
             GM.setValue(`infusion/alignment/${plane}/(${x},${y})`, alignment);
             GM.setValue(`infusion/depth/${plane}/(${x},${y})`, depth);
         }
@@ -115,12 +127,14 @@ async function PrintData(print_tiles, print_backgrounds, print_infusion, print_p
     let tiledata = {}, backgrounds = {}, infusion = {}, portals = {};
 
     for (let value_id of list_values_ids) {
-        let match = /(?<disc>tiles)\/(?<disc2>\w+)\/(?<plane>[\w ']+)\/(?<coords>\(\d+,\d+\))/.exec(value_id);
-        if (match == null) match = /(?<disc>background)\/(?<tiletype>[\w ']+)/.exec(value_id);
-        if (match == null) match = /(?<disc>infusion)\/(?<disc2>\w+)\/(?<plane>[\w ']+)\/(?<coords>\(\d+,\d+\))/.exec(value_id);
-        if (match == null) match = /(?<disc>portals)\/(?<plane>[\w ']+)\/(?<coords>\(\d+,\d+\))\/(?<side>\w+)\/(?<counter>\d+)/.exec(value_id);
+        let match = match_any(value_id,
+		                        String.raw`(?<disc>tiles)\/(?<disc2>\w+)\/(?<plane>${re_name})\/(?<coords>\(\d+,\d+\))`,
+		                        String.raw`(?<disc>background)\/(?<tiletype>${re_name})`,
+		                        String.raw`(?<disc>infusion)\/(?<disc2>\w+)\/(?<plane>${re_name})\/(?<coords>\(\d+,\d+\))`,
+		                        String.raw`(?<disc>portals)\/(?<plane>${re_name})\/(?<coords>\(\d+,\d+\))\/(?<side>\w+)\/(?<counter>\d+)`
+                               );
         if (match == null) {
-            console.log(value_id);
+            console.log('"' + value_id + '"');
             continue;
         }
         const {disc, disc2, plane, coords, tiletype, side, counter} = match.groups;
@@ -215,7 +229,6 @@ async function DeleteValue(id) {
 
 function main() {
     if (gather_data) GatherData();
-    // if (print_map) PrintMap();
 
     NexMap.PrintData = function(a, b, c, d) { PrintData(a, b, c, d); };
     NexMap.ClearData = function() { ClearData(); }
