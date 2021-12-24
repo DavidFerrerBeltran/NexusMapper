@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Nexus Mapper
-// @version      0
+// @version      1.0.0
 // @author       Goliath
 // @description  Mapping tool for NC
 // @namespace    https://github.com/DavidFerrerBeltran/
