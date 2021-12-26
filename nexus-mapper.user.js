@@ -1,18 +1,23 @@
 // ==UserScript==
 // @name         Nexus Mapper
-// @version      2.dev.1
+// @version      2.dev.2
 // @author       Goliath
 // @description  Mapping tool for NC
+//
 // @namespace    https://github.com/DavidFerrerBeltran/
-// @homepage     https://github.com/DavidFerrerBeltran/NexusMapper
-// @source       https://github.com/DavidFerrerBeltran/NexusMapper
-// @downloadURL  https://github.com/DavidFerrerBeltran/NexusMapper/raw/dev/nexus-mapper.user.js
+// @homepage     https://www.nexusclash.com/viewtopic.php?f=8&t=0 not yet enabled
+// @source       https://github.com/DavidFerrerBeltran/NexusMapper/tree/dev
+//
+// @updateURL    https://github.com/DavidFerrerBeltran/NexusMapper/raw/dev/nexus-mapper.user.js
+// @supportURL   https://github.com/DavidFerrerBeltran/NexusMapper/Issues
+// @supportURL   https://www.nexusclash.com/viewtopic.php?f=8&t=0 not yet enabled
+//
 // @match        *://nexusclash.com/clash.php*
 // @match        *://www.nexusclash.com/clash.php*
 // @match        file:///*Nexus%20Clash*.html
-// @match        file:///*.NexMap.txt
 // @icon         https://nexusclash.com/favicon.ico
 // @grant        GM_setValue
+// @grant        unsafeWindow
 // @grant        GM.listValues
 // @grant        GM.setValue
 // @grant        GM.getValue
@@ -351,15 +356,16 @@ function SaveData(save_tiles, save_backgrounds, save_infusion, save_portals) {
 }
 
 async function ExportData(charname) {
+    console.log(charname);
     if (charname == undefined) charname = GetCharName();
     let list_values_ids = await GM.listValues();
     let data = [];
     for (let value_id of list_values_ids) {
-        const match = MatchRegexp(value_id, String.raw`(?<char>${re_name})/(?<id>.*)`);
+        const match = MatchRegexp(value_id, String.raw`(?<char>[^/]+)/(?<id>.*)`);
         if (match != null && match.groups.char == charname) data.push(`${match.groups.id}: ${await GM.getValue(value_id)}`);
     }
     data.sort();
-    SaveLinesToFile(data, `${charname}.NexMap.txt`);
+    SaveLinesToFile(data, `${charname}.NexMap`);
 }
 
 async function ImportArray(import_array, charname) {let count_imports = 0, count_depth_deletes = 0;
@@ -433,59 +439,105 @@ async function DeleteValue(id) {
 
 function GetTabName() {
     // check if tab is Game
-    if (MatchRegexp(unsafeWindow.location.origin, ".*nexusclash.com")) {
-        if (document.getElementById("CharacterInfo")) {
-            if (document.getElementById("Map")) return "Game - Map";
-            if (document.getElementById("inventory")) return "Game - Inventory";
-            if (document.getElementById("PadForm")) return "Game - Pad";
-            if (document.getElementById("NexusMapper")) return "Game - NexusMapper";
-            return "Game - ?"; // Either board or weapons pane, didn't find an id to distinguish them
-        }
-        const match = MatchAny(unsafeWindow.location.search, String.raw`\?op=(?<op>character).*`, String.raw`\?op=(?<op>faction).*`, String.raw`\?op=(?<op>map).*`);
-        if (match) return match.groups.op.charAt(0).toUpperCase() + match.groups.op.slice(1);
-    } else {
-        if (MatchRegexp(unsafeWindow.location.pathname, String.raw`.*NexMap\.txt`)) return "Read html";
-        if (MatchRegexp(unsafeWindow.location.pathname, String.raw`.*Clash.*\.html`)) return "Import data";
+    if (document.getElementById("CharacterInfo")) {
+        if (document.getElementById("Map")) return "Game - Map";
+        if (document.getElementById("inventory")) return "Game - Inventory";
+        if (document.getElementById("PadForm")) return "Game - Pad";
+        if (document.getElementById("NexusMapper")) return "Game - NexusMapper";
+        return "Game - ?"; // Either board or weapons pane, didn't find an id to distinguish them
     }
+    const match = MatchAny(unsafeWindow.location.search, String.raw`\?op=(?<op>character).*`, String.raw`\?op=(?<op>faction).*`, String.raw`\?op=(?<op>map).*`);
+    if (match) return match.groups.op.charAt(0).toUpperCase() + match.groups.op.slice(1);
+    if (unsafeWindow.location.origin == "https://www.nexusclash.com") return "Character Selection";
 
+    return "Game - Map";
     return "???";
 }
 
-NexMap.DisplayNMSubtab = function () {
+function NMSubtabUI() {
     // Remove Pad if present
     if (document.getElementById("main-right").children[0].children[0].children[3]) document.getElementById("main-right").children[0].children[0].children[3].children[0].innerHTML = "";
     // Remove Nexus Tweaks settings if present
     if (document.getElementById("main-right").children[0].children[1]) document.getElementById("main-right").children[0].children[1].innerHTML = "";
 
     const right_menu_content = document.getElementById("main-right").children[0].children[0].children[2].children[0];
-    right_menu_content.innerHTML =
-        '<div id="NexusMapper">' +
-        '<table>' +
-        '<tbody>' +
-        '<th colspan="6" align="center" style="text-align:center;font-weight:bold">NEXUS MAPPER</th>' +
-        '<tr bgcolor="#eeeeee" style="text-align:center;font-weight:bold">' +
-        '<td>Export</td>' +
-        '<td>Import</td>' +
-        '</tr>' +
-        '<tr bgcolor="#ffffff">' +
-        '<td>Exporting settigns will go here</td>' +
-        '<td><label for="importFile" hidden>File to be imported:</label><input type="file" id="importFile" name="importFile" accept=".NexMap.txt"></td>' +
-        '</tr>' +
-        '<tr bgcolor="#ffffff">' +
-        '<td><input type="button" value="Export" onclick="NexMap.ExportData()"></td>' +
-        '<td><input type="button" value="Import" onclick="NexMap.ImportFile(document.getElementById(\'importFile\').files[0])"></td>' +
-        '</tr>' +
-        '</tbody>' +
-        '</table>' +
-        '</div>'
-    ;
+    right_menu_content.replaceChildren();
+    // Table creation
+    const NM_div = right_menu_content.appendChild(document.createElement('div'));
+    NM_div.id = "NexusMapper";
+    const NM_content_table = NM_div.appendChild(document.createElement('table'));
+    const NM_content_tbody = NM_content_table.appendChild(document.createElement('tbody'));
+    NM_content_tbody.innerHTML = '<th colspan="6" align="center" style="text-align:center;font-weight:bold">NEXUS MAPPER</th>';
+
+    // Row creation
+    let current_row = null;
+
+    current_row = NM_content_tbody.appendChild(document.createElement('tr'));
+    current_row.bgcolor = "#eeeeee";
+    current_row.innerHTML = '<td>Export</td><td>Import</td>';
+
+    current_row = NM_content_tbody.appendChild(document.createElement('tr'));
+    current_row.bgcolor = "#ffffff";
+    let export_settings = current_row.appendChild(document.createElement('td'));
+    export_settings.textContent = "Exporting settings will go here";
+    let import_filename = current_row.appendChild(document.createElement('td'));
+    import_filename.textContent = "No file selected";
+
+    current_row = NM_content_tbody.appendChild(document.createElement('tr'));
+    current_row.bgcolor = "#ffffff";
+    let export_button = current_row.appendChild(document.createElement('td'));
+    export_button.innerHTML = '<input type="button" value="Export"/>';
+    export_button.firstChild.onclick = function() { ExportData(); };
+    let import_button = current_row.appendChild(document.createElement('td'));
+    import_button.innerHTML = '<input type="file" id="importFile" accept=".NexMap" style="display:none;"/><input type="button" value="Select File..."/><input type="button" value="Import"/>';
+    import_button.children[0].onchange = function() { import_filename.textContent = "FILE: " + import_button.children[0].files[0].name; };
+    import_button.children[1].onclick = function() { document.getElementById('importFile').click(); };
+    import_button.children[2].onclick = function() { ImportFile(document.getElementById('importFile').files[0]); };
 }
+
 function SidebarUI(is_NMsubtab) {
     const menu_TR = document.getElementById("sidebar-menu").firstChild.firstChild;
     const NMsubtab_button = document.createElement('td');
-    NMsubtab_button.innerHTML = '<input class="sidebar_menu" type="button" value="Nexus Mapper" onclick="NexMap.DisplayNMSubtab()">';
+    NMsubtab_button.innerHTML = '<input class="sidebar_menu" type="button" value="Nexus Mapper"/>';
+    NMsubtab_button.onclick = function() { NMSubtabUI(); };
     menu_TR.appendChild(NMsubtab_button);
 }
+
+async function EnhancedIngameMapUI() {
+    const ingame_map = document.getElementById("Map").children[0].children[0];
+    let map_tiles = [];
+    for (let i = 0; i < 5; i++) {
+        map_tiles.push([]);
+        for (let j = 0; j < 5; j++) {
+            map_tiles[i].push(ingame_map.children[i].children[j]);
+        }
+    }
+    const area_desc = document.getElementById("AreaDescription");
+    if (area_desc == null) return;
+
+    const charname = GetCharName();
+    const {plane} = MatchRegexp(area_desc.getElementsByTagName("b")[0].childNodes[0].textContent, String.raw`(?<name>${re_name}) \(${re_coords} (?<plane>${re_name}), an? `).groups;
+    const preserve_timestamp = false;
+    const Data = async function(id) { if (preserve_timestamp) { return await GM.getValue(`${charname}/${id}`); } else { let data = await GM.getValue(`${charname}/${id}`); if (!data) return data; return data.replace(/\[\d+\]/, ""); } }
+    for (let i = 0; i < 5; i++) {
+        for (let j = 0; j < 5; j++) {
+            const map_tile = map_tiles[i][j];
+            if (map_tile.title == undefined) continue;
+            if (map_tile.title == "Unknown") continue;
+            let {x, y} = MatchRegexp(map_tile.title, String.raw`\(${re_coords}\) (?<tile_name>${re_name}), an? (?<tile_type>${re_name})`).groups;
+            const infusion_alignment = await Data(`infusion/alignment/${plane}/(${x},${y})`);
+            if (infusion_alignment) {
+                if (!MatchRegexp(map_tile.style.backgroundImage, String.raw`images/g/inf/infusion-.*\.gif`)) {
+                    if (map_tile.style.backgroundImage) map_tile.style.backgroundImage = `url('images/g/inf/infusion-${infusion_alignment.charAt(0).toLowerCase() + infusion_alignment.slice(1)}.gif'), ` + map_tile.style.backgroundImage;
+                    else map_tile.style.backgroundImage = `url('images/g/inf/infusion-${infusion_alignment.charAt(0).toLowerCase() + infusion_alignment.slice(1)}.gif')`;
+                    console.log("bawk");
+                }
+            }
+        }
+    }
+}
+
+function EnhancedGlobalMapUI() {}
 
 async function DevAlert(version) {
     if (!await GM.getValue(`alert/${version}`)) {
@@ -503,13 +555,10 @@ function main() {
 
     if (MatchRegexp(tab, "Game.*")) {
         GatherData(tab == "Game - Map");
+        if (tab == "Game - Map") EnhancedIngameMapUI();
         SidebarUI();
     }
-    else if (tab == "Import data") {
-        const url = unsafeWindow.location.href.replace(/%20/g, " ");
-        if (auto_import) ImportData(MatchRegexp(url, String.raw`file:///.*/(?<filename>.*?)\.NexMap\.txt`).groups.filename);
-        else console.log("To import data manually, execute \"NexMap.ImportData(charname)\", where charname is a string with the name of the character that is receiving the data. Be careful with spelling and capitalization!");
-    }
+    else if (tab == "Map") EnhancedGlobalMapUI();
 
     RegisterFunctions();
 }
