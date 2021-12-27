@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Nexus Mapper
-// @version      2.dev.2
+// @version      2.dev.3
 // @author       Goliath
 // @description  Mapping tool for NC
 //
@@ -158,7 +158,8 @@ async function GatherData(read_map) {
     // Infusion
     const area_infusion = area_desc.getElementsByClassName("infusionArea")[0];
     if (area_infusion != null) {
-        const {alignment, depth} = MatchRegexp(area_infusion.textContent, String.raw`This location is infused and aligned to the forces of (?<alignment>\w+) to a depth of (?<depth>\d+) points.`).groups;
+        let {alignment, depth} = MatchRegexp(area_infusion.textContent, String.raw`This location is infused and aligned to the forces of (?<alignment>Good|Evil|Moral Freedom) to a depth of (?<depth>\d+) points.`).groups;
+        if (alignment == "Moral Freedom") alignment = "Unaligned"
         Store(`infusion/alignment/${plane}/(${x},${y})`, alignment);
         Store(`infusion/depth/${plane}/(${x},${y})`, depth);
     }
@@ -175,12 +176,14 @@ async function GetData(charname, preserve_timestamp) {
 		                       String.raw`(?<char>${re_name})/${re_disc("tiles")}/(?<disc2>\w+)/(?<plane>${re_name})/(?<coords>\(\d+,\d+\))`,
 		                       String.raw`(?<char>${re_name})/${re_disc("background")}/(?<tiletype>${re_name})`,
 		                       String.raw`(?<char>${re_name})/${re_disc("infusion")}/(?<disc2>\w+)/(?<plane>${re_name})/(?<coords>\(\d+,\d+\))`,
-                               String.raw`(?<char>${re_name})/${re_disc("portals")}/(?<plane>${re_name})/(?<coords>\(\d+,\d+\))/(?<side>\w+)/(?<counter>\d+)`
+                               String.raw`(?<char>${re_name})/${re_disc("portals")}/(?<plane>${re_name})/(?<coords>\(\d+,\d+\))/(?<side>\w+)/(?<counter>\d+)`,
+                               String.raw`${re_disc("alert")}/.*`
                                );
         if (match == null) {
             console.log('"' + value_id + '"');
             continue;
         }
+        if (match.groups.disc == "alert") continue;
         const {char, disc, disc2, plane, coords, tiletype, side, counter} = match.groups;
         if (charname != null && char != charname) continue;
 
@@ -298,7 +301,7 @@ async function SaveCharData(charname, save_tiles, save_backgrounds, save_infusio
         for (let plane in tiledata) {
             text.push(plane.replace(" ", "_") + " = {");
             for (let dict in tiledata[plane]) {
-                text.push(tab(1) + "\"" + dict + "\" = {");
+                text.push(tab(1) + "\"" + dict + "\": {");
                 for (let tile in tiledata[plane][dict]) text.push(tab(2) + `${tile}: "${tiledata[plane][dict][tile]}",`);
                 text.push(tab(1) + "},");
             }
@@ -318,7 +321,7 @@ async function SaveCharData(charname, save_tiles, save_backgrounds, save_infusio
         for (let plane in infusion) {
             text.push(plane.replace(" ", "_") + " = {");
             for (let dict in infusion[plane]) {
-                text.push(tab(1) + "\"" + dict + "\" = {");
+                text.push(tab(1) + "\"" + dict + "\": {");
                 for (let tile in infusion[plane][dict]) text.push(tab(2) + `${tile}: "${infusion[plane][dict][tile]}",`);
                 text.push(tab(1) + "},");
             }
@@ -331,7 +334,7 @@ async function SaveCharData(charname, save_tiles, save_backgrounds, save_infusio
         for (let plane in infusion) {
             text.push(plane.replace(" ", "_") + " = {");
             for (let coords in portals[plane]) {
-                text.push(tab(1) + coords + " = {");
+                text.push(tab(1) + coords + ": {");
                 if ("inside" in portals[plane][coords]) {
                     text.push(tab(2) + "Inside: [");
                     for (let portal in portals[plane][coords].inside) text.push(tab(3) + `"${portals[plane][coords].inside[portal]}",`);
@@ -462,37 +465,81 @@ function NMSubtabUI() {
 
     const right_menu_content = document.getElementById("main-right").children[0].children[0].children[2].children[0];
     right_menu_content.replaceChildren();
+
     // Table creation
     const NM_div = right_menu_content.appendChild(document.createElement('div'));
     NM_div.id = "NexusMapper";
     const NM_content_table = NM_div.appendChild(document.createElement('table'));
+
+    // Table Header
+    const NM_content_theader = NM_content_table.appendChild(document.createElement('th'));
+    NM_content_theader.colSpan = "2";
+    NM_content_theader.style.backgroundColor = "#ffffff";
+    NM_content_theader.style.fontWeight = "bold";
+    NM_content_theader.style.textAlign = "center";
+    NM_content_theader.textContent = "NEXUS MAPPER";
+
+    // Table Content
     const NM_content_tbody = NM_content_table.appendChild(document.createElement('tbody'));
-    NM_content_tbody.innerHTML = '<th colspan="6" align="center" style="text-align:center;font-weight:bold">NEXUS MAPPER</th>';
-
-    // Row creation
     let current_row = null;
+    const widespace = false;
+    const add_widespace = function(bg) {
+        current_row = NM_content_tbody.appendChild(document.createElement('tr'));
+        current_row.appendChild(document.createElement('td')).textContent = "\u00a0";
+        current_row.appendChild(document.createElement('td')).textContent = "\u00a0";
+        current_row.style.backgroundColor = bg;
+    }
 
+    // Row Group - Share Data
     current_row = NM_content_tbody.appendChild(document.createElement('tr'));
-    current_row.bgcolor = "#eeeeee";
-    current_row.innerHTML = '<td>Export</td><td>Import</td>';
-
-    current_row = NM_content_tbody.appendChild(document.createElement('tr'));
-    current_row.bgcolor = "#ffffff";
     let export_settings = current_row.appendChild(document.createElement('td'));
-    export_settings.textContent = "Exporting settings will go here";
+    export_settings.textContent = "Export settings";
+    let select_file_button = current_row.appendChild(document.createElement('td'));
+    select_file_button.innerHTML =
+        '<input type="file" id="importFile" accept=".NexMap" style="display:none;"/>' +
+        '<input type="button" value="Select File..."/>';
+    select_file_button.children[0].onchange = function() { import_filename.textContent = "FILE: " + select_file_button.children[0].files[0].name; };
+    select_file_button.children[1].onclick = function() { document.getElementById('importFile').click(); };
+    current_row.style.backgroundColor = "#ffffff";
+
+    current_row = NM_content_tbody.appendChild(document.createElement('tr'));
+    let export_settings2 = current_row.appendChild(document.createElement('td'));
+    export_settings2.textContent = "will go here.";
     let import_filename = current_row.appendChild(document.createElement('td'));
     import_filename.textContent = "No file selected";
+    current_row.style.backgroundColor = "#ffffff";
 
     current_row = NM_content_tbody.appendChild(document.createElement('tr'));
-    current_row.bgcolor = "#ffffff";
-    let export_button = current_row.appendChild(document.createElement('td'));
-    export_button.innerHTML = '<input type="button" value="Export"/>';
-    export_button.firstChild.onclick = function() { ExportData(); };
+    let export_data = current_row.appendChild(document.createElement('td'));
+    export_data.innerHTML = '<input type="button" value="Export data"/>';
+    export_data.onclick = function() { ExportData(); };
     let import_button = current_row.appendChild(document.createElement('td'));
-    import_button.innerHTML = '<input type="file" id="importFile" accept=".NexMap" style="display:none;"/><input type="button" value="Select File..."/><input type="button" value="Import"/>';
-    import_button.children[0].onchange = function() { import_filename.textContent = "FILE: " + import_button.children[0].files[0].name; };
-    import_button.children[1].onclick = function() { document.getElementById('importFile').click(); };
-    import_button.children[2].onclick = function() { ImportFile(document.getElementById('importFile').files[0]); };
+    import_button.innerHTML = '<input type="button" value="Import"/>';
+    import_button.onclick = function() { ImportFile(document.getElementById('importFile').files[0]); };
+    current_row.style.backgroundColor = "#ffffff";
+
+    if (widespace) add_widespace("#ffffff");
+
+    // Row Group - Python Export
+    current_row = NM_content_tbody.appendChild(document.createElement('tr'));
+    let export_tiles = current_row.appendChild(document.createElement('td'));
+    export_tiles.innerHTML = '<input type="button" value="Export tile data (.py)"/>';
+    export_tiles.onclick = function() { SaveData(1,0,0,0); };
+    let export_backgrounds = current_row.appendChild(document.createElement('td'));
+    export_backgrounds.innerHTML = '<input type="button" value="Export backgrounds data (.py)"/>';
+    export_backgrounds.onclick = function() { SaveData(0,1,0,0); };
+    current_row.style.backgroundColor = "#eeeeee";
+
+    current_row = NM_content_tbody.appendChild(document.createElement('tr'));
+    let export_infusion = current_row.appendChild(document.createElement('td'));
+    export_infusion.innerHTML = '<input type="button" value="Export infusion data (.py)"/>';
+    export_infusion.onclick = function() { SaveData(0,0,1,0); };
+    let export_portals = current_row.appendChild(document.createElement('td'));
+    export_portals.innerHTML = '<input type="button" value="Export portal data (.py)"/>';
+    export_portals.onclick = function() { SaveData(0,0,0,1); };
+    current_row.style.backgroundColor = "#eeeeee";
+
+    if (widespace) add_widespace("#eeeeee");
 }
 
 function SidebarUI(is_NMsubtab) {
