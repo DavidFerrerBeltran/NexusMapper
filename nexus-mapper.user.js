@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Nexus Mapper
-// @version      2.dev.3
+// @version      2.dev.4
 // @author       Goliath
 // @description  Mapping tool for NC
 //
@@ -22,6 +22,7 @@
 // @grant        GM.setValue
 // @grant        GM.getValue
 // @grant        GM.deleteValue
+//
 // @require      https://raw.githubusercontent.com/eligrey/FileSaver.js/master/dist/FileSaver.js
 // ==/UserScript==
 
@@ -29,7 +30,7 @@ const auto_import = false;
 
 let NexMap = unsafeWindow.NexMap = {};
 function RegisterFunctions() {
-    NexMap.PrintRawData = function() { PrintRawData(); };
+    NexMap.PrintRawData = function(regexp) { PrintRawData(regexp); };
     NexMap.PrintCharData = function(charname, ...flags) { PrintCharData(charname, ...flags); };
     NexMap.SaveCharData = function(charname, ...flags) { SaveCharData(charname, ...flags); };
 
@@ -75,7 +76,7 @@ const re_name = String.raw`[\w '&,]+`;
 const re_coords = String.raw`(?<x>\d+), (?<y>\d+)`; // puls two coordinates named x and y
 const re_unnamed_coords = String.raw`(\d+) (\d+)` // pulls two unnamed coordinates
 
-function GetCharName() { return document.querySelector("#CharacterInfo a[href^='clash.php?op=character&id=']").textContent; }
+function GetCharName() { return document.querySelector("#CharacterInfo a[href^='clash.php?op=character&id=']").textContent.replace("/", ""); }
 function GetCharFaction() {
     if (!document.querySelector("#CharacterInfo a[href^='clash.php?op=faction&do=view&id=']")) return null;
     return document.querySelector("#CharacterInfo a[href^='clash.php?op=faction&do=view&id=']").textContent;
@@ -211,10 +212,12 @@ async function GetData(charname, preserve_timestamp) {
     return {tiledata, backgrounds, infusion, portals};
 }
 
-async function PrintRawData() {
+async function PrintRawData(regexp) {
     let list_values_ids = await GM.listValues();
     let data = [];
-    for (let value_id of list_values_ids) data.push(`${value_id}: ${await GM.getValue(value_id)}`);
+    for (let value_id of list_values_ids) {
+        if (!regexp || regexp.exec(value_id)) data.push(`${value_id}: ${await GM.getValue(value_id)}`);
+    }
     data.sort();
     for (let line of data) console.log(line);
 }
@@ -542,12 +545,27 @@ function NMSubtabUI() {
     if (widespace) add_widespace("#eeeeee");
 }
 
-function SidebarUI(is_NMsubtab) {
+function IngameSidebarUI(is_NMsubtab) {
     const menu_TR = document.getElementById("sidebar-menu").firstChild.firstChild;
     const NMsubtab_button = document.createElement('td');
     NMsubtab_button.innerHTML = '<input class="sidebar_menu" type="button" value="Nexus Mapper"/>';
     NMsubtab_button.onclick = function() { NMSubtabUI(); };
     menu_TR.appendChild(NMsubtab_button);
+}
+
+async function GetCharNamesFromData() {
+    const list_values_ids = await GM.listValues();
+    let list_chars = []
+
+    for (let value_id of list_values_ids) {
+        const match = MatchRegexp(value_id, String.raw`(?<char>${re_name})/.*`);
+        if (!match) continue;
+        const char = match.groups.char;
+        if (char == "alert") continue;
+        if (!list_chars.includes(char)) list_chars.push(char);
+    }
+
+    return list_chars;
 }
 
 async function EnhancedIngameMapUI() {
@@ -584,7 +602,71 @@ async function EnhancedIngameMapUI() {
     }
 }
 
-function EnhancedGlobalMapUI() {}
+function DrawInfusion(canvas_ctx, x, y, xf, yf, color) {
+    const X = (x - unsafeWindow.mapDim[unsafeWindow.cur_plane].x_offset) * 24;
+    const Y = (y - unsafeWindow.mapDim[unsafeWindow.cur_plane].y_offset) * 24;
+
+    canvas_ctx.fillStyle = color;
+    canvas_ctx.fillRect(X*xf, Y*yf, 6*xf, 23*yf);
+    canvas_ctx.strokeStyle = 'black';
+    canvas_ctx.strokeRect(X*xf, Y*yf, 6*xf, 23*yf);
+}
+
+async function EnhancedGlobalMapUI() {
+    const map_buttons_div = document.getElementById('navbarsExample08');
+    const char_list = await GetCharNamesFromData();
+    const char_dropdown_div = map_buttons_div.appendChild(document.createElement('div'));
+    const char_dropdown_label = char_dropdown_div.appendChild(document.createElement('div'));
+    char_dropdown_label.textContent = "Display infusion data for:";
+    const char_dropdown = char_dropdown_div.appendChild(document.createElement('select'));
+    char_dropdown.name = "Character Name";
+    char_dropdown.id = "charname";
+    let charname = "";
+    let infusion = {};
+    char_dropdown.onchange = async function() { charname = char_dropdown.value; infusion = (await GetData(charname, false)).infusion; map_buttons_div.click(); };
+    const no_char = char_dropdown.appendChild(document.createElement('option'));
+    no_char.value = "";
+    no_char.textContent = "---";
+    for (let char of char_list) {
+        const char_option = char_dropdown.appendChild(document.createElement('option'));
+        char_option.value = char;
+        char_option.textContent = char;
+    }
+
+    map_buttons_div.onclick = function() {
+        if (!charname) return;
+        const canvas = document.getElementById('map');
+        const plane = {
+            406: "Cordillera",
+            416: "Centrum",
+            402: "Elysium",
+            403: "Stygia",
+            404: "Purgatorio",
+            405: "Purgatorio",
+        }[unsafeWindow.cur_plane];
+        let tile_alignment = {};
+        if (plane in infusion) tile_alignment = infusion[plane].alignment;
+
+        let xf = 1, yf = 1;
+        if (canvas.style.width) xf = canvas.width / canvas.style.width.slice(0,-2);
+        if (canvas.style.height) yf = canvas.height / canvas.style.height.slice(0,-2);
+
+        if (canvas.getContext) {
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let coords in tile_alignment) {
+                const {x, y} = MatchRegexp(coords, String.raw`\((?<x>\d+),(?<y>\d+)\)`).groups;
+                const color = {
+                    Good:      "#00FFFF",
+                    Unaligned: "#FFD700",
+                    Evil:      "#BB0A1E",
+                }[tile_alignment[coords]];
+                DrawInfusion(ctx, x, y, xf, yf, color);
+            }
+        }
+    };
+    map_buttons_div.click();
+}
 
 async function DevAlert(version) {
     if (!await GM.getValue(`alert/${version}`)) {
@@ -603,7 +685,7 @@ function main() {
     if (MatchRegexp(tab, "Game.*")) {
         GatherData(tab == "Game - Map");
         if (tab == "Game - Map") EnhancedIngameMapUI();
-        SidebarUI();
+        IngameSidebarUI();
     }
     else if (tab == "Map") EnhancedGlobalMapUI();
 
