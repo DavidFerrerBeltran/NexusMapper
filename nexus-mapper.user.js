@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Nexus Mapper
-// @version      2.dev.4
+// @version      2.dev.5
 // @author       Goliath
 // @description  Mapping tool for NC
 //
@@ -72,7 +72,7 @@ function MatchAny(text, ...str_regexps) {
     }
     return match;
 }
-const re_name = String.raw`[\w '&,]+`;
+const re_name = String.raw`[\w '&,\.]+`;
 const re_coords = String.raw`(?<x>\d+), (?<y>\d+)`; // puls two coordinates named x and y
 const re_unnamed_coords = String.raw`(\d+) (\d+)` // pulls two unnamed coordinates
 
@@ -361,14 +361,18 @@ function SaveData(save_tiles, save_backgrounds, save_infusion, save_portals) {
     SaveCharData(charname, save_tiles, save_backgrounds, save_infusion, save_portals);
 }
 
-async function ExportData(charname) {
+async function ExportData(charname, filters) {
     console.log(charname);
     if (charname == undefined) charname = GetCharName();
     let list_values_ids = await GM.listValues();
     let data = [];
     for (let value_id of list_values_ids) {
         const match = MatchRegexp(value_id, String.raw`(?<char>[^/]+)/(?<id>.*)`);
-        if (match != null && match.groups.char == charname) data.push(`${match.groups.id}: ${await GM.getValue(value_id)}`);
+        if (match != null && match.groups.char == charname) {
+            if (!filters || MatchAny(match.groups.id, ...filters)) {
+                data.push(`${match.groups.id}: ${await GM.getValue(value_id)}`);
+            }
+        }
     }
     data.sort();
     SaveLinesToFile(data, `${charname}.NexMap`);
@@ -485,7 +489,7 @@ function NMSubtabUI() {
     // Table Content
     const NM_content_tbody = NM_content_table.appendChild(document.createElement('tbody'));
     let current_row = null;
-    const widespace = false;
+    const widespace = true;
     const add_widespace = function(bg) {
         current_row = NM_content_tbody.appendChild(document.createElement('tr'));
         current_row.appendChild(document.createElement('td')).textContent = "\u00a0";
@@ -496,7 +500,14 @@ function NMSubtabUI() {
     // Row Group - Share Data
     current_row = NM_content_tbody.appendChild(document.createElement('tr'));
     let export_settings = current_row.appendChild(document.createElement('td'));
-    export_settings.textContent = "Export settings";
+    export_settings.textContent = "Export settings will go here";
+    let import_filename = current_row.appendChild(document.createElement('td'));
+    import_filename.textContent = "No file selected";current_row.style.backgroundColor = "#ffffff";
+
+    current_row = NM_content_tbody.appendChild(document.createElement('tr'));
+    let share_infusion = current_row.appendChild(document.createElement('td'));
+    share_infusion.innerHTML = '<input type="button" value="Export Mapper infusion data"/>';
+    share_infusion.onclick = function() { ExportData(GetCharName(), ["infusion/.*"]); };
     let select_file_button = current_row.appendChild(document.createElement('td'));
     select_file_button.innerHTML =
         '<input type="file" id="importFile" accept=".NexMap" style="display:none;"/>' +
@@ -506,18 +517,11 @@ function NMSubtabUI() {
     current_row.style.backgroundColor = "#ffffff";
 
     current_row = NM_content_tbody.appendChild(document.createElement('tr'));
-    let export_settings2 = current_row.appendChild(document.createElement('td'));
-    export_settings2.textContent = "will go here.";
-    let import_filename = current_row.appendChild(document.createElement('td'));
-    import_filename.textContent = "No file selected";
-    current_row.style.backgroundColor = "#ffffff";
-
-    current_row = NM_content_tbody.appendChild(document.createElement('tr'));
-    let export_data = current_row.appendChild(document.createElement('td'));
-    export_data.innerHTML = '<input type="button" value="Export data"/>';
-    export_data.onclick = function() { ExportData(); };
+    let share_data = current_row.appendChild(document.createElement('td'));
+    share_data.innerHTML = '<input type="button" value="Export full Mapper data"/>';
+    share_data.onclick = function() { ExportData(); };
     let import_button = current_row.appendChild(document.createElement('td'));
-    import_button.innerHTML = '<input type="button" value="Import"/>';
+    import_button.innerHTML = '<input type="button" value="Import Mapper data"/>';
     import_button.onclick = function() { ImportFile(document.getElementById('importFile').files[0]); };
     current_row.style.backgroundColor = "#ffffff";
 
