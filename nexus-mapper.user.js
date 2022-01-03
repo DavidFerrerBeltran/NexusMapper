@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Nexus Mapper
-// @version      2.dev.5
+// @version      2.dev.6
 // @author       Goliath
 // @description  Mapping tool for NC
 //
@@ -120,14 +120,25 @@ async function GatherData(read_map) {
                 Store(`tiles/types/${plane}/(${x},${y})`, tile_type);
                 Store(`tiles/data/${plane}/(${x},${y})`, map_tile.title);
                 Store(`background/${tile_type}`, background);
-                const match = MatchRegexp(map_tile.style.backgroundImage, String.raw`.*infusion-(?<alignment>\w+)\.gif.*`);
-                if (match != null) {
-                    const alignment = match.groups.alignment.charAt(0).toUpperCase() + match.groups.alignment.slice(1);
+
+                const infusion_match = MatchRegexp(map_tile.style.backgroundImage, String.raw`.*infusion-(?<alignment>\w+)\.gif.*`);
+                if (infusion_match != null) {
+                    const alignment = infusion_match.groups.alignment.charAt(0).toUpperCase() + infusion_match.groups.alignment.slice(1);
                     const prev_alignment = await Data(`infusion/alignment/${plane}/(${x},${y})`);
-                    if (prev_alignment != undefined && prev_alignment != alignment) {
+                    if (prev_alignment == undefined || prev_alignment != alignment) {
                         // If a tile had its infusion alignment changed, assume its depth changed as well
                         Clear(`infusion/depth/${plane}/(${x},${y})`);
                         Store(`infusion/alignment/${plane}/(${x},${y})`, alignment);
+                    }
+                }
+
+                const portal_match = MatchRegexp(map_tile.style.backgroundImage, String.raw`.*portal\.gif.*`);
+                const main_desc = area_desc.getElementsByClassName("mainDescArea")[0].childNodes[0].textContent;
+                const side = MatchRegexp(main_desc, String.raw`You are standing (?<side>\w+) .*`).groups.side;
+                if (portal_match != null) {
+                    const portal_found = await Data(`portals/${plane}/(${x},${y})/${side}/1`);
+                    if (!portal_found) {
+                        Store(`portals/${plane}/(${x},${y})/${side}/1`, "Unknown Destination");
                     }
                 }
             }
@@ -595,15 +606,41 @@ async function EnhancedIngameMapUI() {
             if (map_tile.title == "Unknown") continue;
             let {x, y} = MatchRegexp(map_tile.title, String.raw`\(${re_coords}\) (?<tile_name>${re_name}), an? (?<tile_type>${re_name})`).groups;
             const infusion_alignment = await Data(`infusion/alignment/${plane}/(${x},${y})`);
+            const infusion_depth = await Data(`infusion/depth/${plane}/(${x},${y})`);
             if (infusion_alignment) {
                 if (!MatchRegexp(map_tile.style.backgroundImage, String.raw`images/g/inf/infusion-.*\.gif`)) {
                     if (map_tile.style.backgroundImage) map_tile.style.backgroundImage = `url('images/g/inf/infusion-${infusion_alignment.charAt(0).toLowerCase() + infusion_alignment.slice(1)}.gif'), ` + map_tile.style.backgroundImage;
                     else map_tile.style.backgroundImage = `url('images/g/inf/infusion-${infusion_alignment.charAt(0).toLowerCase() + infusion_alignment.slice(1)}.gif')`;
-                    console.log("bawk");
+                    if (infusion_depth) {
+                        const tileTable = document.createElement('table');
+                        let middleElement = map_tile.firstChild;
+                        let infElement = document.createElement('td');
+                        infElement.textContent = `\u00a0${infusion_depth} ${infusion_alignment.charAt(0)}`;
+                        infElement.style.textAlign = "left";
+                        if (!middleElement) {
+                            map_tile.appendChild(tileTable);
+                            tileTable.appendChild(document.createElement('tr'));
+                            tileTable.lastChild.appendChild(document.createElement('br'));
+                            tileTable.appendChild(document.createElement('tr'));
+                            tileTable.lastChild.appendChild(document.createElement('br'));
+                            tileTable.appendChild(document.createElement('tr'));
+                            tileTable.lastChild.appendChild(infElement);
+                        } else {
+                            map_tile.replaceChild(tileTable, middleElement);
+                            tileTable.appendChild(document.createElement('tr'));
+                            tileTable.lastChild.appendChild(document.createElement('br'));
+                            tileTable.appendChild(document.createElement('tr'));
+                            tileTable.lastChild.appendChild(document.createElement('td'));
+                            tileTable.lastChild.lastChild.appendChild(middleElement);
+                            tileTable.appendChild(document.createElement('tr'));
+                            tileTable.lastChild.appendChild(infElement);
+                        }
+                    }
                 }
             }
         }
     }
+    console.log("bawk");
 }
 
 function DrawInfusion(canvas_ctx, x, y, xf, yf, color) {
