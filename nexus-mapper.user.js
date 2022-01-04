@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Nexus Mapper
-// @version      2.dev.6
+// @version      2.dev.7
 // @author       Goliath
 // @description  Mapping tool for NC
 //
@@ -72,7 +72,7 @@ function MatchAny(text, ...str_regexps) {
     }
     return match;
 }
-const re_name = String.raw`[\w '&,\.]+`;
+const re_name = String.raw`[\w '&,\.-]+`;
 const re_coords = String.raw`(?<x>\d+), (?<y>\d+)`; // puls two coordinates named x and y
 const re_unnamed_coords = String.raw`(\d+) (\d+)` // pulls two unnamed coordinates
 
@@ -604,7 +604,12 @@ async function EnhancedIngameMapUI() {
             const map_tile = map_tiles[i][j];
             if (map_tile.title == undefined) continue;
             if (map_tile.title == "Unknown") continue;
-            let {x, y} = MatchRegexp(map_tile.title, String.raw`\(${re_coords}\) (?<tile_name>${re_name}), an? (?<tile_type>${re_name})`).groups;
+            const match = MatchRegexp(map_tile.title, String.raw`\(${re_coords}\) (?<tile_name>${re_name}), an? (?<tile_type>${re_name})`);
+            if (!match) {
+                console.log("[EnhancedIngameMapUI] Error with tilename: ", map_tile.title);
+                continue;
+            }
+            let {x, y} = match.groups;
             const infusion_alignment = await Data(`infusion/alignment/${plane}/(${x},${y})`);
             const infusion_depth = await Data(`infusion/depth/${plane}/(${x},${y})`);
             if (infusion_alignment) {
@@ -643,7 +648,7 @@ async function EnhancedIngameMapUI() {
     console.log("bawk");
 }
 
-function DrawInfusion(canvas_ctx, x, y, xf, yf, color) {
+function DrawInfusion(canvas_ctx, x, y, xf, yf, color, D) {
     const X = (x - unsafeWindow.mapDim[unsafeWindow.cur_plane].x_offset) * 24;
     const Y = (y - unsafeWindow.mapDim[unsafeWindow.cur_plane].y_offset) * 24;
 
@@ -651,6 +656,11 @@ function DrawInfusion(canvas_ctx, x, y, xf, yf, color) {
     canvas_ctx.fillRect(X*xf, Y*yf, 6*xf, 23*yf);
     canvas_ctx.strokeStyle = 'black';
     canvas_ctx.strokeRect(X*xf, Y*yf, 6*xf, 23*yf);
+
+    if (D > -1) {
+        canvas_ctx.font = "16px Arial";
+        canvas_ctx.fillText(D, 10 + X*xf, 17 + Y*yf);
+    }
 }
 
 async function EnhancedGlobalMapUI() {
@@ -686,7 +696,11 @@ async function EnhancedGlobalMapUI() {
             405: "Purgatorio",
         }[unsafeWindow.cur_plane];
         let tile_alignment = {};
-        if (plane in infusion) tile_alignment = infusion[plane].alignment;
+        let tile_inf_depth = {};
+        if (plane in infusion) {
+            tile_alignment = infusion[plane].alignment
+            tile_inf_depth = infusion[plane].depth
+        };
 
         let xf = 1, yf = 1;
         if (canvas.style.width) xf = canvas.width / canvas.style.width.slice(0,-2);
@@ -702,7 +716,9 @@ async function EnhancedGlobalMapUI() {
                     Unaligned: "#FFD700",
                     Evil:      "#BB0A1E",
                 }[tile_alignment[coords]];
-                DrawInfusion(ctx, x, y, xf, yf, color);
+                let D = -1;
+                if (coords in tile_inf_depth) D = Math.floor(tile_inf_depth[coords] / 50);
+                DrawInfusion(ctx, x, y, xf, yf, color, D);
             }
         }
     };
