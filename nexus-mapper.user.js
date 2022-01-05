@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Nexus Mapper
-// @version      2.dev.7
+// @version      2.dev.8
 // @author       Goliath
 // @description  Mapping tool for NC
 //
@@ -24,6 +24,7 @@
 // @grant        GM.deleteValue
 //
 // @require      https://raw.githubusercontent.com/eligrey/FileSaver.js/master/dist/FileSaver.js
+// @require      https://greasyfork.org/scripts/12228/code/setMutationHandler.js
 // ==/UserScript==
 
 const auto_import = false;
@@ -697,6 +698,21 @@ async function EnhancedGlobalMapUI() {
         }[unsafeWindow.cur_plane];
         let tile_alignment = {};
         let tile_inf_depth = {};
+
+        setMutationHandler({
+            target: document.querySelector('div.content'),
+            selector: '#tooltip',
+            handler: nodes => nodes.forEach(node => {
+                const match = MatchRegexp(node.textContent, String.raw`^\(${re_coords}\).+`)
+                if (!match) return
+
+                const {x,y} = match.groups
+                const coords = `(${x},${y})`
+                if (!(coords in tile_inf_depth)) return
+
+                node.textContent = `${tile_inf_depth[coords]}${tile_alignment[coords].charAt(0)} ` + node.textContent
+            })
+        });
         if (plane in infusion) {
             tile_alignment = infusion[plane].alignment
             tile_inf_depth = infusion[plane].depth
