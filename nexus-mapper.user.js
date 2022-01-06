@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Nexus Mapper
-// @version      2.dev.8
+// @version      2.dev.9
 // @author       Goliath
 // @description  Mapping tool for NC
 //
@@ -100,6 +100,37 @@ async function GatherData(read_map) {
     const {neighborhood} = MatchRegexp(full_location.childNodes[2].textContent, String.raw`, Neighborhood: (?<neighborhood>${re_name})\)`).groups;
     const location_type = full_location.childNodes[1].textContent;
 
+    // Infusion
+    const area_infusion = area_desc.getElementsByClassName("infusionArea")[0];
+    if (area_infusion != null) {
+        let {alignment, depth} = MatchRegexp(area_infusion.textContent, String.raw`This location is infused and aligned to the forces of (?<alignment>Good|Evil|Moral Freedom) to a depth of (?<depth>\d+) points.`).groups;
+        if (alignment == "Moral Freedom") alignment = "Unaligned"
+        Store(`infusion/alignment/${plane}/(${x},${y})`, alignment);
+        Store(`infusion/depth/${plane}/(${x},${y})`, depth);
+    }
+
+    // Portals
+    const forms = document.getElementById("main-left").getElementsByTagName("form");
+    for (let form of forms) {
+        if (form.name == "portal") {
+            const main_desc = area_desc.getElementsByClassName("mainDescArea")[0].childNodes[0].textContent;
+            const side = MatchRegexp(main_desc, String.raw`You are standing (?<side>\w+) .*`).groups.side;
+            const inputs = form.getElementsByTagName("input");
+            let counter = 1;
+            for (let input of inputs) {
+                if (input.type == "submit") {
+                    const identifier = `portals/${plane}/(${x},${y})/${side}/${counter}`;
+                    let match = MatchRegexp(input.value, String.raw`.* to (?<dest>.*)`);
+                    let value = undefined;
+                    if (match != undefined) value = match.groups.dest;
+                    else value = `Unknown Destination (${input.value})`;
+                    Store(identifier, value);
+                    counter += 1;
+                }
+            }
+        }
+    }
+
     // Map Tiles
     if (read_map) {
         const ingame_map = document.getElementById("Map");
@@ -144,37 +175,6 @@ async function GatherData(read_map) {
                 }
             }
         }
-    }
-
-    // Portals
-    const forms = document.getElementById("main-left").getElementsByTagName("form");
-    for (let form of forms) {
-        if (form.name == "portal") {
-            const main_desc = area_desc.getElementsByClassName("mainDescArea")[0].childNodes[0].textContent;
-            const side = MatchRegexp(main_desc, String.raw`You are standing (?<side>\w+) .*`).groups.side;
-            const inputs = form.getElementsByTagName("input");
-            let counter = 1;
-            for (let input of inputs) {
-                if (input.type == "submit") {
-                    const identifier = `portals/${plane}/(${x},${y})/${side}/${counter}`;
-                    let match = MatchRegexp(input.value, String.raw`.* to (?<dest>.*)`);
-                    let value = undefined;
-                    if (match != undefined) value = match.groups.dest;
-                    else value = `Unknown Destination (${input.value})`;
-                    Store(identifier, value);
-                    counter += 1;
-                }
-            }
-        }
-    }
-
-    // Infusion
-    const area_infusion = area_desc.getElementsByClassName("infusionArea")[0];
-    if (area_infusion != null) {
-        let {alignment, depth} = MatchRegexp(area_infusion.textContent, String.raw`This location is infused and aligned to the forces of (?<alignment>Good|Evil|Moral Freedom) to a depth of (?<depth>\d+) points.`).groups;
-        if (alignment == "Moral Freedom") alignment = "Unaligned"
-        Store(`infusion/alignment/${plane}/(${x},${y})`, alignment);
-        Store(`infusion/depth/${plane}/(${x},${y})`, depth);
     }
 }
 
@@ -393,6 +393,7 @@ async function ExportData(charname, filters) {
 async function ImportArray(import_array, charname) {let count_imports = 0, count_depth_deletes = 0;
     const re_timestamp = String.raw`\[(?<timestamp>\d+)\]`;
     for (let element of import_array) {
+        console.log(element)
         const {id, timestamp, data} = MatchRegexp(element, String.raw`^(?<id>.*): ${re_timestamp}(?<data>.*)$`).groups;
         const local_element = await GM.getValue(`${charname}/${id}`);
         if (local_element == undefined) {
@@ -403,12 +404,19 @@ async function ImportArray(import_array, charname) {let count_imports = 0, count
             const local_timestamp = MatchRegexp(local_element, String.raw`^${re_timestamp}.*$`).groups.timestamp;
             if (local_timestamp < timestamp) {
                 count_imports += 1;
-                GM.setValue(`${charname}/${id}`, `[${timestamp}]${data}`);
                 const inf_align_match = MatchRegexp(id, String.raw`infusion/alignment/(?<id_right>.*)`);
                 if (inf_align_match) {
-                    count_depth_deletes += 1;
-                    GM.deleteValue(`${charname}/infusion/depth/${inf_align_match.groups.id_right}`);
+                    const align_data = GM.getValue(`${charname}/infusion/alignment/${inf_align_match.groups.id_right}`);
+                    const depth_data = GM.getValue(`${charname}/infusion/depth/${inf_align_match.groups.id_right}`);
+                    if (!align_data || !depth_data) continue
+                    const pastA = MatchRegexp(align_data, String.raw`${re_timestamp}(?<data>.*)$`).groups; // pizza
+                    const pastD = MatchRegexp(depth_data, String.raw`${re_timestamp}(?<data>.*)$`).groups;
+                    if (pastD.timestamp < timestamp && pastA.data != data) {
+                        count_depth_deletes += 1;
+                        GM.deleteValue(`${charname}/infusion/depth/${inf_align_match.groups.id_right}`);
+                    }
                 }
+                GM.setValue(`${charname}/${id}`, `[${timestamp}]${data}`);
             }
         }
     }
@@ -659,8 +667,9 @@ function DrawInfusion(canvas_ctx, x, y, xf, yf, color, D) {
     canvas_ctx.strokeRect(X*xf, Y*yf, 6*xf, 23*yf);
 
     if (D > -1) {
-        canvas_ctx.font = "16px Arial";
-        canvas_ctx.fillText(D, 10 + X*xf, 17 + Y*yf);
+        const fontsize = Math.floor(16 * yf);
+        canvas_ctx.font = `${fontsize}px Arial`;
+        canvas_ctx.fillText(D, (10+X)*xf, (17+Y)*yf);
     }
 }
 
@@ -713,6 +722,7 @@ async function EnhancedGlobalMapUI() {
                 node.textContent = `${tile_inf_depth[coords]}${tile_alignment[coords].charAt(0)} ` + node.textContent
             })
         });
+
         if (plane in infusion) {
             tile_alignment = infusion[plane].alignment
             tile_inf_depth = infusion[plane].depth
